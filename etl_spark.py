@@ -19,7 +19,6 @@ from datetime import datetime
 from pyspark.sql import Row
 import logging
 import uuid
-import glob
 import sys 
 
 def check_missing_columns(df, expected_columns):
@@ -226,7 +225,7 @@ try :
     logger.info("Logs table ensured")
 except Exception as e:
     logger.error(f"Error creating logs table: {str(e)}")
-    # sys.exit()
+    sys.exit()
 
 try : 
     spark.sql(f"""
@@ -244,7 +243,7 @@ try :
     logger.info("Error log table ensured")
 except Exception as e:
     logger.error(f"Error creating error log table: {str(e)}")
-    # sys.exit()
+    sys.exit()
 
 # Read CSV files from a folder or pattern
 try :
@@ -256,7 +255,7 @@ try :
 except Exception as e:  
     logger.error(f"Error during reading CSV from source: {str(e)}")
     error_entry = create_error_log(spark,uuid_,"ETL ADLS", "load csv from source", raw_data_path, str(e))
-    # sys.exit()
+    sys.exit()
 
 # Add filename column
 # df = df.withColumn("source_file", input_file_name())
@@ -272,7 +271,7 @@ if missing_columns:
     logger.error(f"Missing Columns: {missing_columns}")
     logger.error("send alert to the team and process stop")
     error_entry = create_error_log(spark,uuid_,"ETL ADLS", "check missing_columns", "spark dataframe", f"Missing columns: {'|'.join(missing_columns)}")
-    # sys.exit()
+    sys.exit()
 else:
     # print("No missing columns.")
     logger.info("No missing columns found.")
@@ -318,7 +317,7 @@ try :
 except Exception as e:
     logger.error(f"Error during casting order date: {str(e)}")
     error_entry = create_error_log(spark,uuid_,"ETL ADLS", "cast order date", "spark dataframe", str(e))
-    # sys.exit()
+    sys.exit()
 
 # convert to date only (without time component)
 # df = df.withColumn(
@@ -333,7 +332,7 @@ try :
 except Exception as e:
     logger.error(f"Error during converting to date only: {str(e)}")
     error_entry = create_error_log(spark,uuid_,"ETL ADLS", "convert to date only", "spark dataframe", str(e))
-    # sys.exit()
+    sys.exit()
 
 
 try :
@@ -348,6 +347,6 @@ try :
 except Exception as e:
     logger.error(f"Error during writing parquet: {str(e)}")
     error_entry = create_error_log(spark,uuid_,"ETL ADLS", "write parquet", "spark parquet", str(e))
-    # sys.exit()
+    sys.exit()
 
 spark.stop()

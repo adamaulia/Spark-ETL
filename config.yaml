@@ -1,0 +1,17 @@
+etl:
+  raw_data_path: Sales_data_1\sales_data\
+  cleansed_data_path: cleansed\
+expected_columns:
+  - Order ID
+  - Product
+  - Quantity Ordered
+  - Price Each
+  - Order Date
+  - Purchase Address
+iceberg:
+  jar : "C:\\spark\\spark-3.3.2-bin-hadoop3\\jars\\iceberg-spark-runtime-3.3_2.12-1.3.0.jar"
+  warehouse_location : iceberg
+  catalog_name: spark_catalog
+  database_name: db
+  logs_table : process_logs
+  error_table : error_logs
