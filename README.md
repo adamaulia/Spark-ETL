@@ -19,18 +19,18 @@ A robust PySpark-based ETL pipeline for processing CSV data with data quality ch
 
 ## Installation
 
-1. Clone the repository:
+1. make sure java, spark, pyspark, iceberg are perfectly configured.
+
+2. Clone the repository:
 ```bash
-git clone <repository-url>
-cd <project-directory>
+https://github.com/adamaulia/Spark-ETL.git
+cd Spark-ETL
 ```
 
-2. Install required Python packages:
+3. Install required Python packages:
 ```bash
 pip install pyspark findspark pyyaml python-dotenv
 ```
-
-3. Download the Apache Iceberg Spark runtime JAR and place it in your project directory.
 
 ## Configuration
 
@@ -60,14 +60,13 @@ expected_columns:
 
 ```
 project/
-├── main.py                 # Main ETL script
-├── config.yaml            # Configuration file
-├── .env                   # Environment variables (optional)
-├── data/
-│   ├── raw/              # Source CSV files
-│   └── cleansed/         # Output parquet files
-├── warehouse/            # Iceberg warehouse
-└── spark_job.log         # Application logs
+├── etl_spark.py        # Main ETL script
+├── config.yaml         # Configuration file
+├── cleansed /          # output clean files
+├── iceberg /           # Iceberg warehouse
+├── Sales_Data_1 /      # Input csv 
+│   ├── Sales_Data /    # Source CSV files
+└── spark_job.log       # Application logs
 ```
 
 ## Usage
@@ -75,7 +74,7 @@ project/
 Run the ETL pipeline:
 
 ```bash
-python main.py
+python etl_spark.py
 ```
 
 The pipeline will:
@@ -102,7 +101,7 @@ Detects and removes duplicate records using SHA-256 hashing.
 ## Logging
 
 ### Process Logs
-Stored in `{catalog}.{database}.process_logs` with fields:
+Stored in `{spark_catalog}.{db}.process_logs` with fields:
 - `uuid`: Unique process identifier
 - `ts_start`: Process start timestamp
 - `ts_end`: Process end timestamp
@@ -114,7 +113,7 @@ Stored in `{catalog}.{database}.process_logs` with fields:
 - `column_length`: Number of columns
 
 ### Error Logs
-Stored in `{catalog}.{database}.error_logs` with fields:
+Stored in `{spark_catalog}.{db}.error_logs` with fields:
 - `timestamp`: Error occurrence time
 - `uuid`: Process identifier
 - `process_name`: Process where error occurred
@@ -137,6 +136,8 @@ data/cleansed/
 ├── report_month=2024-02/
 └── report_month=2024-03/
 ```
+I choose parquet files because of the benefit of size and speed. In addition, partition by month 
+improves performance, as queries scan only the relevant partitions instead of the entire dataset. 
 
 ## Monitoring
 
@@ -153,6 +154,77 @@ The pipeline continues processing even when non-critical errors occur. All error
 - Written to the application log file
 - Displayed in the console
 
+Every major operation is wrapped in try-catch. Here's my logic:
+
+- **Schema problems or table creation fails**: Kill the whole thing. Can't continue without the basics columns.
+
+    - prosess logs 
+    ```
+        +--------------------+--------------------+--------------------+----------------+------------+--------------------+-----------------+-------------+-------------+
+        |                uuid|            ts_start|              ts_end|duration_seconds|process_name|    sub_process_name|table_destination|record_insert|column_length|
+        +--------------------+--------------------+--------------------+----------------+------------+--------------------+-----------------+-------------+-------------+
+        |e1daebdc-9ac6-408...|2025-11-17 18:59:...|2025-11-17 18:59:...|        1.718924|    ETL ADLS|load csv from source|  spark dataframe|        18383|            5|
+        +--------------------+--------------------+--------------------+----------------+------------+--------------------+-----------------+-------------+-------------+
+    ```
+
+    - error logs 
+    ```
+        +--------------------+--------------------+------------+--------------------+-----------------+--------------------+
+        |           timestamp|                uuid|process_name|    sub_process_name|table_destination|       error_message|
+        +--------------------+--------------------+------------+--------------------+-----------------+--------------------+
+        |2025-11-17T18:59:...|e1daebdc-9ac6-408...|    ETL ADLS|check missing_col...|  spark dataframe|Missing columns: ...|
+        +--------------------+--------------------+------------+--------------------+-----------------+--------------------+
+
+    ```
+
+    - spark logs 
+    ```
+        2025-11-17 18:59:36,890 INFO spark_logger: Logs table ensured
+        2025-11-17 18:59:36,962 INFO spark_logger: Error log table ensured
+        2025-11-17 18:59:38,681 INFO spark_logger: CSV file read from source
+        2025-11-17 18:59:47,973 ERROR spark_logger: Missing Columns: ['Purchase Address']
+        2025-11-17 18:59:47,974 ERROR spark_logger: send alert to the team and process stop
+        2025-11-17 18:59:55,458 INFO py4j.clientserver: Closing down clientserver connection
+
+    ```
+
+- **Nulls or duplicates found**: Log it but keep going. These aren't always deal-breakers.
+
+    -   an example for null removal and duplicate handling in the spark_catalog.db.process_logs. It can be seen the record_insert drop from 186850 to 185688.
+
+
+        ```
+        +--------------------+--------------------+--------------------+----------------+------------+--------------------+-----------------+-------------+-------------+
+        |                uuid|            ts_start|              ts_end|duration_seconds|process_name|    sub_process_name|table_destination|record_insert|column_length|
+        +--------------------+--------------------+--------------------+----------------+------------+--------------------+-----------------+-------------+-------------+
+        |96637efa-8659-47e...|2025-11-16 20:06:...|2025-11-16 20:06:...|        5.281171|    ETL ADLS|load csv from source|  spark dataframe|       186850|            6|
+        |96637efa-8659-47e...|2025-11-16 20:07:...|2025-11-16 20:07:...|             0.0|    ETL ADLS|check missing_col...|  spark dataframe|       186850|            6|
+        |96637efa-8659-47e...|2025-11-16 20:08:...|2025-11-16 20:08:...|        0.025135|    ETL ADLS|     cast order date|  spark dataframe|       185688|            7|
+        |96637efa-8659-47e...|2025-11-16 20:09:...|2025-11-16 20:09:...|        0.021247|    ETL ADLS|convert to date only|  spark dataframe|       185688|            8|
+        |96637efa-8659-47e...|2025-11-16 20:10:...|2025-11-16 20:10:...|       16.388351|    ETL ADLS|       write parquet|    spark parquet|       185688|            8|
+        +--------------------+--------------------+--------------------+----------------+------------+--------------------+-----------------+-------------+-------------+
+        ```
+    - this error logs shows the check null column and duplicate   
+    
+        - spark_catalog.db.error_logs
+        ```
+            +--------------------+--------------------+------------+------------------+-----------------+--------------------+
+            |           timestamp|                uuid|process_name|  sub_process_name|table_destination|       error_message|
+            +--------------------+--------------------+------------+------------------+-----------------+--------------------+
+            |2025-11-16T20:07:...|96637efa-8659-47e...|    ETL ADLS|check null_columns|  spark dataframe|Null columns: Ord...|
+            |2025-11-16T20:08:...|96637efa-8659-47e...|    ETL ADLS|  check duplicates|  spark dataframe|Duplicate rows fo...|
+            +--------------------+--------------------+------------+------------------+-----------------+--------------------+
+
+        ```
+
+    - this spark logs shows the detail null and duplicate
+
+        -   spark_job.log 
+        ```
+            2025-11-16 20:07:54,164 ERROR spark_logger: Null Check: {'Order ID': 545, 'Product': 545, 'Quantity Ordered': 545, 'Price Each': 545, 'Order Date': 545, 'Purchase Address': 545}
+            2025-11-16 20:08:31,882 ERROR spark_logger: Duplicate Rows Found: 266
+        ``` 
+
 ## Troubleshooting
 
 ### Common Issues
@@ -165,30 +237,3 @@ The pipeline continues processing even when non-critical errors occur. All error
 
 **Issue**: Memory errors with large datasets
 - Solution: Adjust Spark configuration for executor and driver memory
-
-## Performance Tuning
-
-Consider these configurations for better performance:
-```python
-spark = SparkSession.builder \
-    .config("spark.executor.memory", "4g") \
-    .config("spark.driver.memory", "2g") \
-    .config("spark.sql.shuffle.partitions", "200") \
-    .getOrCreate()
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-[Add your license information here]
-
-## Contact
-
-[Add contact information here]
